@@ -23,7 +23,7 @@ def _apply_price_spike(state: dict[str, Any], step: int) -> dict[str, Any]:
         # Capture baseline once, then set (not multiply) to avoid compounding
         if "_baseline_grid_price" not in state:
             state["_baseline_grid_price"] = state["grid_price_usd_mwh"]
-        state["grid_price_usd_mwh"] = state["_baseline_grid_price"] * 10.0
+        state["grid_price_usd_mwh"] = state["_baseline_grid_price"] * 3.0
     return state
 
 

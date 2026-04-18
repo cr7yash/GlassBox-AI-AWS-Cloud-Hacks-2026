@@ -1,0 +1,38 @@
+# Changelog - 2026-04-18
+
+## Added
+- Scaffolded `backend/simulator/` package (Role 2: Simulator Architect)
+  - `schemas.py` — Pydantic models matching Technical-doc §3.1 (TraceRecord), §3.2 (StadiumConfig), Contract A (TracePostBody), Contract C (SessionStart/Stop)
+  - `stadiums.py` — 5 hardcoded stadium profiles (Lusail, Lambeau, Wembley, Allegiant, Yankee) with 24-hour climate and grid curves
+  - `scenarios.py` — 5 chaos scenario switches (normal, price_spike, sensor_fail, api_broken, heat_wave)
+  - `impact.py` — Energy/cost/carbon impact calculator (kWh, $, kg CO₂)
+  - `bedrock_manager.py` — Bedrock InvokeModel with Claude Sonnet 4 tool-use and Guardrails integration
+  - `loop.py` — Async simulation loop (evolve → chaos → invoke → apply → impact → POST trace)
+  - `app.py` — FastAPI control plane (POST /session/start, POST /session/stop, GET /stadiums, GET /health)
+  - `secrets.py` — AWS Secrets Manager helper with in-process caching and env-var fallback
+  - `seed_stadiums.py` — DynamoDB stadium seed script
+  - `test_run.py` — Standalone test harness for Bedrock calls without UI/platform
+  - `pyproject.toml`, `requirements.txt`, `.env.example`, `README.md`
+- Set Manager model to Claude Sonnet 4, Judge model to Claude Opus 4.6
+
+## Fixed (from sanity check)
+- price_spike scenario was compounding 3× every tick (exponential explosion) — now captures baseline once and sets to `baseline × 3`
+- Tool definitions used Converse API format (`toolSpec`/`inputSchema`) — reformatted to Messages API (`name`/`input_schema`)
+- Synchronous boto3 `invoke_model` was blocking the async event loop — wrapped in `asyncio.to_thread()`
+- Added missing `timestamp` and `agent` fields to `TracePostBody`
+- Added warning logs when API key is empty (was failing silently with 403s)
+- Fixed inference profile ARN for workshop accounts with Bearer token auth
+- Fixed logger format string in loop.py (was printing status code as "score")
+- Fixed JUDGE_MODEL_ID to match available inference profile format
+- Removed unused imports (`json`, `sys`) from `seed_stadiums.py`
+
+## Verified
+- Successful end-to-end test run: Lusail/heat_wave (3 steps) and Lambeau/price_spike (8 steps)
+- All 11 Python files pass syntax check
+- All Pydantic schemas match Technical-doc §3.1, §3.2, §3.3
+- Contract A and Contract C compliance verified
+- Price spike stable at 3× baseline across all ticks
+
+## Notes
+- No existing changelog file was present, so this dated changelog file was initialized.
+- Created `PROJECT_UNDERSTANDING.md` with a consolidated project understanding from pitch and technical docs.

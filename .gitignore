@@ -6,6 +6,23 @@ dist/
 *.tfstate.*
 __pycache__/
 *.pyc
+*.pyo
 *.tsbuildinfo
 .env
+.env.local
+.env.*.local
 .DS_Store
+
+# Python
+*.egg-info/
+.venv/
+venv/
+.eggs/
+*.egg
+
+# Simulator
+backend/simulator/.env
+
+# AWS
+.aws-sam/
+samconfig.toml

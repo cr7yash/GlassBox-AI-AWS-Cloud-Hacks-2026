@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 # Active sessions — keyed by session_id
 _sessions: dict[str, asyncio.Task] = {}
 
+# Trace buffer — stores recent traces per session for polling
+_trace_buffer: dict[str, list[dict]] = {}
+
 
 # ---------------------------------------------------------------------------
 # State helpers
@@ -190,6 +193,7 @@ async def run_session(
                 )
 
                 # 7. Build and POST trace
+                trace_id = f"trc_{ulid.new().str}"
                 trace_body = TracePostBody(
                     session_id=session_id,
                     stadium_id=stadium.stadium_id,
@@ -205,21 +209,37 @@ async def run_session(
                     guardrail_intervention=guardrail_intervention,
                 )
 
+                # 7a. Store in local buffer for polling
+                trace_dict = trace_body.model_dump()
+                trace_dict["trace_id"] = trace_id
+                if session_id not in _trace_buffer:
+                    _trace_buffer[session_id] = []
+                _trace_buffer[session_id].append(trace_dict)
+
+                # 7b. POST to platform (may fail if platform not deployed — that's OK)
                 headers = {"Content-Type": "application/json"}
                 if api_key:
                     headers["x-api-key"] = api_key
 
-                resp = await http.post(
-                    trace_endpoint,
-                    content=trace_body.model_dump_json(),
-                    headers=headers,
-                )
-                logger.info(
-                    "Step %d | %s | status=%d",
-                    step,
-                    manager_output.action.tool,
-                    resp.status_code,
-                )
+                try:
+                    resp = await http.post(
+                        trace_endpoint,
+                        content=trace_body.model_dump_json(),
+                        headers=headers,
+                    )
+                    logger.info(
+                        "Step %d | %s | status=%d",
+                        step,
+                        manager_output.action.tool,
+                        resp.status_code,
+                    )
+                except Exception:
+                    # Platform not deployed yet — traces are still in local buffer
+                    logger.info(
+                        "Step %d | %s | buffered (platform unavailable)",
+                        step,
+                        manager_output.action.tool,
+                    )
 
             except asyncio.CancelledError:
                 logger.info("Session %s cancelled at step %d", session_id, step)
@@ -251,6 +271,12 @@ def stop_session(session_id: str) -> bool:
         task.cancel()
         return True
     return False
+
+
+def get_session_traces(session_id: str, after: int = 0) -> list[dict]:
+    """Return traces for a session, optionally after a given index (for polling)."""
+    traces = _trace_buffer.get(session_id, [])
+    return traces[after:]
 
 
 def active_sessions() -> list[str]:

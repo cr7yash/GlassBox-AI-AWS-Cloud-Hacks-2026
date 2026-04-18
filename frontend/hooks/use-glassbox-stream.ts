@@ -7,7 +7,7 @@
 
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { Trace, CriticalAlert, Postmortem, WsMessage } from "@/lib/types"
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? ""

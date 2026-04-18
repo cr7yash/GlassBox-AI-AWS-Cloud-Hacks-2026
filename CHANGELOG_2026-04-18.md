@@ -1,6 +1,39 @@
 # Changelog - 2026-04-18
 
-## Added
+## Frontend ↔ Backend Integration
+- Synced frontend stadiums to backend (Lambeau, Allegiant, Yankee replace Camp Nou, Maracanã, Rose Bowl)
+- Synced frontend chaos modes to backend scenario enum (`price_spike`, `sensor_fail`, `api_broken`, `heat_wave`)
+- Added `frontend/lib/types.ts` — TypeScript trace types matching backend Pydantic schemas (Technical-doc §3.1)
+- Added `frontend/lib/api.ts` — API client for simulator FastAPI (Contract C: startSession, stopSession, fetchStadiums)
+- Added `frontend/hooks/use-glassbox-stream.ts` — WebSocket hook for live trace streaming (Contract B)
+- Updated `frontend/lib/app-state.ts` — Added sessionId, selectedScenario to Zustand store
+- Wired dashboard to real API calls (start/stop session replaces mock simulation)
+- Added `frontend/.env.example` for SIMULATOR_URL and WS_URL
+
+## Frontend Fixes (from sanity check against Technical-doc §8 and idea.md)
+- Rewrote Safety × Sustainability Quadrant as Recharts ScatterChart (was single CSS dot with wrong axes)
+  - X-axis: cumulative kg_co2_delta (emissions saved), Y-axis: judge_score 0-10
+  - Dots colored by severity (green/amber/red), sized by abs(dollars_delta)
+  - Tooltip on hover with step, tool, score, CO₂, cost
+  - Quadrant shading for danger zones
+- Added PostmortemModal — auto-opens on `postmortem` WebSocket message, renders markdown
+- Added CriticalAlertToast — floating toast with Polly audio playback via `new Audio(url).play()`
+- Added severity color-coding to LiveTrace terminal (green/amber/red lines, left border accents)
+- Added AuditorFeed — expandable judge verdicts with regulation citations (code, title, excerpt)
+- Added facility state metric tiles (outside temp, inside temp, attendance, grid price)
+- Added guardrail blocked banner (purple) and critical alert banner (red)
+
+## Documentation
+- Rewrote README.md with current architecture, quick start, project structure
+- Updated CLAUDE.md with frontend architecture, integration status, known gaps
+- Added INTEGRATION_PLAN.md with 7-step plan and interim polling mode
+
+## Repo Cleanup
+- Removed `Figma/` and `ai-shelf-frontend/` directories (258 files, 47k lines)
+- Renamed `v0/` → `frontend/`
+- Updated `.gitignore` with Python, simulator, and SAM entries
+
+## Added (backend)
 - Scaffolded `backend/simulator/` package (Role 2: Simulator Architect)
   - `schemas.py` — Pydantic models matching Technical-doc §3.1 (TraceRecord), §3.2 (StadiumConfig), Contract A (TracePostBody), Contract C (SessionStart/Stop)
   - `stadiums.py` — 5 hardcoded stadium profiles (Lusail, Lambeau, Wembley, Allegiant, Yankee) with 24-hour climate and grid curves

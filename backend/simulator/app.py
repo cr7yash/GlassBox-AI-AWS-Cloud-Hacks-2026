@@ -11,11 +11,22 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the backend directory (works regardless of cwd)
+_backend_dir = Path(__file__).resolve().parent.parent
+_env_file = _backend_dir / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file, override=True)
+    logging.info("Loaded env from %s", _env_file)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from simulator.loop import active_sessions, start_session, stop_session
+from simulator.loop import active_sessions, get_session_traces, start_session, stop_session
 from simulator.schemas import (
     SessionStartRequest,
     SessionStartResponse,
@@ -68,3 +79,10 @@ async def session_stop(req: SessionStopRequest):
     if not stopped:
         raise HTTPException(status_code=404, detail=f"Session not found or already stopped: {req.session_id}")
     return SessionStopResponse(ok=True)
+
+
+@app.get("/traces/{session_id}")
+async def get_traces(session_id: str, after: int = 0):
+    """Poll for traces. Pass ?after=N to get only traces after index N."""
+    traces = get_session_traces(session_id, after=after)
+    return {"traces": traces, "total": after + len(traces)}

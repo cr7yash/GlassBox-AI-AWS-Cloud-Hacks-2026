@@ -32,15 +32,19 @@ MANAGER_MODEL_ID = "anthropic.claude-sonnet-4-20250514-v1:0"
 JUDGE_MODEL_ID = "anthropic.claude-opus-4-6-v1"
 
 _bedrock_client = None
+_bedrock_client_token = None  # track which token was used
 
 
 def _client():
-    global _bedrock_client
-    if _bedrock_client is None:
+    global _bedrock_client, _bedrock_client_token
+    current_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "")
+    # Recreate client if token changed (e.g. after .env reload)
+    if _bedrock_client is None or current_token != _bedrock_client_token:
         _bedrock_client = boto3.client(
             "bedrock-runtime",
             region_name=os.getenv("AWS_REGION", "us-west-2"),
         )
+        _bedrock_client_token = current_token
     return _bedrock_client
 
 

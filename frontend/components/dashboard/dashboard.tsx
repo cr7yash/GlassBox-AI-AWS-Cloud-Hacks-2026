@@ -6,6 +6,7 @@ import { useAppState } from "@/lib/app-state"
 import { stadiums, scenarios, type Scenario } from "@/lib/stadiums"
 import { startSession, stopSession, formatTraceAsLogLines } from "@/lib/api"
 import { useGlassboxStream } from "@/hooks/use-glassbox-stream"
+import { useTracePolling } from "@/hooks/use-trace-polling"
 import type { Trace } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import {
@@ -19,12 +20,20 @@ import { WorkflowPipeline } from "./workflow-pipeline"
 import { SafetyQuadrant } from "./safety-quadrant"
 import { LiveTrace } from "./live-trace"
 import { LumenRail } from "./lumen-rail"
+import { AuditorFeed } from "./auditor-feed"
+import { PostmortemModal } from "./postmortem-modal"
+import { CriticalAlertToast } from "./critical-alert-toast"
 import { cn } from "@/lib/utils"
 
-const INITIAL_TRACE = [
-  "[system] GlassBox v3 · Lumen spectrum rail online",
-  "[system] Select a stadium and scenario, then start session to stream live agent traces.",
+const INITIAL_TRACE: TraceLine[] = [
+  { text: "[system] GlassBox v3 · Lumen spectrum rail online" },
+  { text: "[system] Select a stadium and scenario, then start session to stream live agent traces." },
 ]
+
+type TraceLine = {
+  text: string
+  severity?: "info" | "warning" | "critical" | null
+}
 
 export function Dashboard() {
   const selectedStadium = useAppState((s) => s.selectedStadium)
@@ -35,7 +44,7 @@ export function Dashboard() {
   const setSelectedScenario = useAppState((s) => s.setSelectedScenario)
   const setSessionId = useAppState((s) => s.setSessionId)
 
-  const [traceLines, setTraceLines] = useState<string[]>(INITIAL_TRACE)
+  const [traceLines, setTraceLines] = useState<TraceLine[]>(INITIAL_TRACE)
   const [allTraces, setAllTraces] = useState<Trace[]>([])
   const [isStarting, setIsStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,24 +52,43 @@ export function Dashboard() {
   // WebSocket stream (connects when sessionId is set and WS_URL is configured)
   const { traces: wsTraces, alerts, postmortems, connected } = useGlassboxStream(sessionId)
 
-  // Append new WebSocket traces to log
+  // Polling fallback (when WebSocket isn't available)
+  const { traces: polledTraces } = useTracePolling(!connected ? sessionId : null)
+
+  // Use whichever source has traces
+  const incomingTraces = connected ? wsTraces : polledTraces
+
+  // Append new traces to log (from WebSocket or polling)
   useEffect(() => {
-    if (wsTraces.length === 0) return
-    const latest = wsTraces[wsTraces.length - 1]
-    // Only process if we haven't seen this trace yet
-    if (allTraces.length < wsTraces.length) {
-      setAllTraces(wsTraces)
-      const newLines = formatTraceAsLogLines(latest)
+    if (incomingTraces.length === 0) return
+    const latest = incomingTraces[incomingTraces.length - 1]
+    if (allTraces.length < incomingTraces.length) {
+      setAllTraces(incomingTraces)
+      const newLines = formatTraceAsLogLines(latest).map((text) => ({
+        text,
+        severity: latest.severity,
+      }))
       setTraceLines((prev) => [...prev, ...newLines])
     }
-  }, [wsTraces, allTraces.length])
+  }, [incomingTraces, allTraces.length])
 
   // Derived metrics from latest trace
   const latestTrace = allTraces[allTraces.length - 1] ?? null
-  const safety = latestTrace?.judge_score ?? 7.4
-  const strain = latestTrace
-    ? Math.min(10, Math.max(0, Math.abs(latestTrace.impact.kwh_delta) / 20))
-    : 3.2
+
+  // Safety: use judge_score if available, otherwise estimate from observation
+  const safety = latestTrace?.judge_score
+    ?? (latestTrace ? Math.max(0, Math.min(10, 10 - (latestTrace.observation.inside_temp_f - 68) / 5)) : 7.4)
+
+  // Cumulative impact across all traces
+  const cumulativeImpact = useMemo(() => {
+    let kwh = 0, dollars = 0, co2 = 0
+    for (const t of allTraces) {
+      kwh += t.impact.kwh_delta
+      dollars += t.impact.dollars_delta
+      co2 += t.impact.kg_co2_delta
+    }
+    return { kwh, dollars, co2 }
+  }, [allTraces])
 
   const status = useMemo<"Ready" | "Live" | "Degraded">(() => {
     if (!sessionId) return "Ready"
@@ -86,14 +114,14 @@ export function Dashboard() {
       setSessionId(session_id)
       setTraceLines((prev) => [
         ...prev,
-        `[system] Session started: ${session_id}`,
-        `[system] Stadium: ${selectedStadium.name} · Scenario: ${selectedScenario}`,
-        `[system] Streaming traces every 5s...`,
+        { text: `[system] Session started: ${session_id}` },
+        { text: `[system] Stadium: ${selectedStadium.name} · Scenario: ${selectedScenario}` },
+        { text: `[system] Streaming traces every 5s...` },
       ])
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error"
       setError(msg)
-      setTraceLines((prev) => [...prev, `[error] Failed to start session: ${msg}`])
+      setTraceLines((prev) => [...prev, { text: `[error] Failed to start session: ${msg}`, severity: "critical" as const }])
     } finally {
       setIsStarting(false)
     }
@@ -103,7 +131,7 @@ export function Dashboard() {
     if (!sessionId) return
     try {
       await stopSession(sessionId)
-      setTraceLines((prev) => [...prev, `[system] Session ${sessionId} stopped.`])
+      setTraceLines((prev) => [...prev, { text: `[system] Session ${sessionId} stopped.` }])
     } catch {
       // Session may already be stopped
     }
@@ -196,8 +224,16 @@ export function Dashboard() {
           </div>
 
           <div className="mx-auto max-w-2xl">
-            <SafetyQuadrant safety={safety} strain={strain} step={allTraces.length} />
+            <SafetyQuadrant traces={allTraces} />
           </div>
+
+          {/* Stadium profile card */}
+          {selectedStadium && !latestTrace && (
+            <div className="rounded-xl border border-border/60 bg-card/50 px-4 py-3">
+              <div className="text-sm font-semibold text-foreground">{selectedStadium.name}</div>
+              <div className="text-xs text-muted-foreground">{selectedStadium.city}, {selectedStadium.country} · {selectedStadium.capacity.toLocaleString()} capacity · {selectedStadium.climateProfile.replace(/_/g, " ")}</div>
+            </div>
+          )}
 
           {/* Facility state from latest observation */}
           {latestTrace && (
@@ -209,7 +245,18 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* Cumulative impact counters */}
+          {allTraces.length > 0 && (
+            <div className="grid grid-cols-3 gap-3">
+              <MetricTile label="ENERGY" value={`${Math.abs(cumulativeImpact.kwh).toFixed(0)} kWh ${cumulativeImpact.kwh < 0 ? "saved" : "used"}`} />
+              <MetricTile label="COST" value={`$${Math.abs(cumulativeImpact.dollars).toFixed(2)} ${cumulativeImpact.dollars < 0 ? "saved" : "spent"}`} />
+              <MetricTile label="CARBON" value={`${Math.abs(cumulativeImpact.co2).toFixed(1)} kg CO₂ ${cumulativeImpact.co2 < 0 ? "reduced" : "emitted"}`} />
+            </div>
+          )}
+
           <LiveTrace lines={traceLines} step={allTraces.length} />
+
+          <AuditorFeed traces={allTraces} />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -271,6 +318,10 @@ export function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Floating overlays */}
+      <PostmortemModal postmortems={postmortems} />
+      <CriticalAlertToast alerts={alerts} />
     </div>
   )
 }

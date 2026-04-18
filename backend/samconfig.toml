@@ -1,0 +1,16 @@
+# samconfig.toml
+# SAM configuration file for the Stadium Agent system
+# Edit values as needed and run: sam deploy
+
+version = 0.1
+
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "stadium-agent-system"
+s3_bucket = ""
+s3_prefix = "stadium-agent-sam"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = []

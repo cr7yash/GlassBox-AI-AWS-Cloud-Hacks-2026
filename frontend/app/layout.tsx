@@ -7,7 +7,7 @@ const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" })
 const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" })
 
 export const metadata: Metadata = {
-  title: 'GlassBox AI v3 - Stadium Audit',
+  title: 'GlassBox AI — Stadium Audit',
   description: 'AI-powered stadium observability and audit platform',
   generator: 'v0.app',
   icons: {

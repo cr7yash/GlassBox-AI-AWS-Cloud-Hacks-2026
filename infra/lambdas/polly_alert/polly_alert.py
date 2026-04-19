@@ -54,7 +54,12 @@ def handler(event, context):
             ContentType="audio/mpeg",
         )
 
-        audio_url = f"https://{AUDIO_BUCKET}.s3.us-west-2.amazonaws.com/{key}"
+        # Generate presigned URL (valid for 1 hour)
+        audio_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": AUDIO_BUCKET, "Key": key},
+            ExpiresIn=3600,
+        )
 
         # Update trace record
         traces_table.update_item(

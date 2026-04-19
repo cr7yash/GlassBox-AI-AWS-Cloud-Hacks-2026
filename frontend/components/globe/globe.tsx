@@ -179,7 +179,7 @@ export function Globe() {
       {/* Overlay UI */}
       <div className="absolute top-8 left-8 z-10">
         <h1 className="text-3xl font-bold text-lavender tracking-tight">
-          GlassBox AI v3
+          GlassBox AI
         </h1>
         <p className="text-muted-foreground mt-1">
           Select a stadium to begin audit

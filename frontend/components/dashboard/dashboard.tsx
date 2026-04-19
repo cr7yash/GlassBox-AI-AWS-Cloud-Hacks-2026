@@ -26,7 +26,7 @@ import { CriticalAlertToast } from "./critical-alert-toast"
 import { cn } from "@/lib/utils"
 
 const INITIAL_TRACE: TraceLine[] = [
-  { text: "[system] GlassBox v3 · Lumen spectrum rail online" },
+  { text: "[system] GlassBox AI · Lumen spectrum rail online" },
   { text: "[system] Select a stadium and scenario, then start session to stream live agent traces." },
 ]
 
@@ -171,7 +171,7 @@ export function Dashboard() {
             </Button>
             <div>
               <h1 className="bg-gradient-to-r from-lavender via-foreground to-lilac-ash bg-clip-text text-xl font-semibold tracking-tight text-transparent sm:text-2xl">
-                GlassBox AI v3: Stadium Audit
+                GlassBox AI: Stadium Audit
               </h1>
               <p className="mt-1 max-w-xl text-sm text-muted-foreground">
                 Live agent observability — simulator → manager → judge → audit, with real-time safety telemetry.
@@ -272,11 +272,11 @@ export function Dashboard() {
 
           <AuditorFeed traces={allTraces} />
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="min-w-0">
               <label className="mb-2 block text-[10px] font-semibold tracking-[0.22em] text-muted-foreground">STADIUM</label>
               <Select value={selectedStadium?.id ?? ""} onValueChange={handleStadiumChange} disabled={!!sessionId}>
-                <SelectTrigger className="h-11 border-border bg-card/80">
+                <SelectTrigger className="h-11 w-full border-border bg-card/80">
                   <SelectValue placeholder="Select stadium" />
                 </SelectTrigger>
                 <SelectContent>
@@ -289,10 +289,10 @@ export function Dashboard() {
               </Select>
             </div>
 
-            <div>
+            <div className="min-w-0">
               <label className="mb-2 block text-[10px] font-semibold tracking-[0.22em] text-muted-foreground">SCENARIO</label>
               <Select value={selectedScenario} onValueChange={(v) => setSelectedScenario(v as Scenario)} disabled={!!sessionId}>
-                <SelectTrigger className="h-11 border-border bg-card/80">
+                <SelectTrigger className="h-11 w-full border-border bg-card/80">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

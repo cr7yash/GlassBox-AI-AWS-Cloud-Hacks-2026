@@ -12,6 +12,7 @@ __pycache__/
 .env.local
 .env.*.local
 .DS_Store
+.env.example
 
 # Python
 *.egg-info/

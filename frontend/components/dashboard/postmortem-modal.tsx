@@ -30,7 +30,7 @@ export function PostmortemModal({ postmortems }: PostmortemModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto border-red-500/30 bg-card">
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto border-red-500/30 bg-card" aria-describedby="postmortem-description">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-red-400">
             <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
@@ -38,7 +38,7 @@ export function PostmortemModal({ postmortems }: PostmortemModalProps) {
           </DialogTitle>
         </DialogHeader>
 
-        <div className="prose prose-invert prose-sm max-w-none">
+        <div className="prose prose-invert prose-sm max-w-none" id="postmortem-description">
           <div className="rounded-lg border border-border bg-background/50 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap">
             {latest.markdown}
           </div>

@@ -2,20 +2,30 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: GlassBox AI — Serverless Platform (Role 3)
 
+Parameters:
+  BedrockAgentId:
+    Type: String
+    Default: AJFMFVPX2D
+  BedrockAgentAliasId:
+    Type: String
+    Default: P6KDX0BDII
+  KnowledgeBaseId:
+    Type: String
+    Default: 4VLZUJAC0T
+
 Globals:
   Function:
-    Runtime: python3.11
-    Timeout: 30
+    Runtime: python3.12
+    Timeout: 60
     MemorySize: 256
     Environment:
       Variables:
-        AWS_REGION_NAME: us-west-2
         TRACES_TABLE: !Ref TracesTable
         STADIUMS_TABLE: !Ref StadiumsTable
         WS_CONNECTIONS_TABLE: !Ref WsConnectionsTable
-        BEDROCK_AGENT_ID: AJFMFVPX2D
-        BEDROCK_AGENT_ALIAS_ID: P6KDX0BDII
-        KNOWLEDGE_BASE_ID: 4VLZUJAC0T
+        BEDROCK_AGENT_ID: !Ref BedrockAgentId
+        BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
+        KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
 
 Resources:
   # -----------------------------------------------------------------------
@@ -24,7 +34,6 @@ Resources:
   TracesTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: glassbox-traces
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: trace_id
@@ -51,7 +60,6 @@ Resources:
   StadiumsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: glassbox-stadiums
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: stadium_id
@@ -63,7 +71,6 @@ Resources:
   WsConnectionsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: glassbox-ws-connections
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: connection_id
@@ -85,6 +92,20 @@ Resources:
         Enabled: true
 
   # -----------------------------------------------------------------------
+  # S3 Bucket for Polly audio
+  # -----------------------------------------------------------------------
+  AudioBucket:
+    Type: AWS::S3::Bucket
+
+  # -----------------------------------------------------------------------
+  # SNS Topic (extensibility hook)
+  # -----------------------------------------------------------------------
+  CriticalAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: glassbox-critical-alerts
+
+  # -----------------------------------------------------------------------
   # HTTP API — Trace Ingestion
   # -----------------------------------------------------------------------
   HttpApi:
@@ -104,20 +125,30 @@ Resources:
   TraceIngestFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: glassbox-traceIngest
       Handler: trace_ingest.handler
       CodeUri: lambdas/trace_ingest/
+      Timeout: 90
+      MemorySize: 512
       Environment:
         Variables:
           WS_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+          CRITICAL_SM_ARN: !Ref CriticalEventStateMachine
+          SNS_TOPIC_ARN: !Ref CriticalAlertsTopic
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref TracesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref WsConnectionsTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt CriticalAlertsTopic.TopicName
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt CriticalEventStateMachine.Name
         - Statement:
             - Effect: Allow
               Action:
                 - bedrock:InvokeAgent
                 - bedrock:InvokeModel
+                - bedrock:Retrieve
               Resource: '*'
         - Statement:
             - Effect: Allow
@@ -182,7 +213,6 @@ Resources:
   WsConnectFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: glassbox-wsConnect
       Handler: ws_connect.handler
       CodeUri: lambdas/ws_connect/
       Policies:
@@ -200,7 +230,6 @@ Resources:
   WsDisconnectFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: glassbox-wsDisconnect
       Handler: ws_disconnect.handler
       CodeUri: lambdas/ws_disconnect/
       Policies:
@@ -221,7 +250,6 @@ Resources:
   TraceBroadcasterFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: glassbox-traceBroadcaster
       Handler: trace_broadcaster.handler
       CodeUri: lambdas/trace_broadcaster/
       Environment:
@@ -243,17 +271,153 @@ Resources:
             StartingPosition: LATEST
             BatchSize: 1
 
+  # -----------------------------------------------------------------------
+  # Step Functions — Critical Event Handler
+  # -----------------------------------------------------------------------
+  PollyAlertFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: polly_alert.handler
+      CodeUri: lambdas/polly_alert/
+      Timeout: 30
+      Environment:
+        Variables:
+          AUDIO_BUCKET: !Ref AudioBucket
+          WS_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TracesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref WsConnectionsTable
+        - S3CrudPolicy:
+            BucketName: !Ref AudioBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - polly:SynthesizeSpeech
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  PostmortemGenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: postmortem_gen.handler
+      CodeUri: lambdas/postmortem_gen/
+      Timeout: 60
+      Environment:
+        Variables:
+          WS_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TracesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref WsConnectionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdas
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt PollyAlertFunction.Arn
+                  - !GetAtt PostmortemGenFunction.Arn
+
+  CriticalEventStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${AWS::StackName}-critical-events"
+      StateMachineType: EXPRESS
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "GlassBox Critical Event Handler",
+          "StartAt": "FanOut",
+          "States": {
+            "FanOut": {
+              "Type": "Parallel",
+              "Branches": [
+                {
+                  "StartAt": "SynthesizeVoice",
+                  "States": {
+                    "SynthesizeVoice": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {
+                        "FunctionName": "${PollyAlertFunction.Arn}",
+                        "Payload.$": "$"
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "GeneratePostmortem",
+                  "States": {
+                    "GeneratePostmortem": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {
+                        "FunctionName": "${PostmortemGenFunction.Arn}",
+                        "Payload.$": "$"
+                      },
+                      "Retry": [
+                        {
+                          "ErrorEquals": ["States.ALL"],
+                          "MaxAttempts": 2,
+                          "BackoffRate": 2
+                        }
+                      ],
+                      "End": true
+                    }
+                  }
+                }
+              ],
+              "Next": "Done"
+            },
+            "Done": {
+              "Type": "Succeed"
+            }
+          }
+        }
+
 Outputs:
   HttpApiUrl:
     Description: HTTP API endpoint for trace ingestion
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
-
   WebSocketUrl:
     Description: WebSocket URL for live trace streaming
     Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
-
   TracesTableName:
     Value: !Ref TracesTable
-
   StadiumsTableName:
     Value: !Ref StadiumsTable
+  CriticalStateMachineArn:
+    Value: !Ref CriticalEventStateMachine
+  AudioBucketName:
+    Value: !Ref AudioBucket

@@ -18,6 +18,7 @@ import ulid
 
 from simulator.bedrock_manager import invoke_manager
 from simulator.impact import compute_impact
+from simulator.judge import invoke_judge
 from simulator.scenarios import apply_scenario
 from simulator.schemas import (
     Action,
@@ -192,6 +193,16 @@ async def run_session(
                     state["grid_co2_g_kwh"],
                 )
 
+                # 6a. Call Judge Agent (in thread to avoid blocking)
+                judge_result = await asyncio.to_thread(
+                    invoke_judge,
+                    stadium.stadium_id,
+                    observation.model_dump(),
+                    manager_output.thought,
+                    manager_output.action.model_dump(),
+                    session_id,
+                )
+
                 # 7. Build and POST trace
                 trace_id = f"trc_{ulid.new().str}"
                 trace_body = TracePostBody(
@@ -209,9 +220,13 @@ async def run_session(
                     guardrail_intervention=guardrail_intervention,
                 )
 
-                # 7a. Store in local buffer for polling
+                # 7a. Store in local buffer for polling (with judge fields)
                 trace_dict = trace_body.model_dump()
                 trace_dict["trace_id"] = trace_id
+                trace_dict["judge_score"] = judge_result.get("judge_score")
+                trace_dict["judge_reasoning"] = judge_result.get("judge_reasoning")
+                trace_dict["severity"] = judge_result.get("severity")
+                trace_dict["regulations_cited"] = judge_result.get("regulations_cited", [])
                 if session_id not in _trace_buffer:
                     _trace_buffer[session_id] = []
                 _trace_buffer[session_id].append(trace_dict)
@@ -228,17 +243,21 @@ async def run_session(
                         headers=headers,
                     )
                     logger.info(
-                        "Step %d | %s | status=%d",
+                        "Step %d | %s | judge=%s/%s | status=%d",
                         step,
                         manager_output.action.tool,
+                        judge_result.get("judge_score"),
+                        judge_result.get("severity"),
                         resp.status_code,
                     )
                 except Exception:
                     # Platform not deployed yet — traces are still in local buffer
                     logger.info(
-                        "Step %d | %s | buffered (platform unavailable)",
+                        "Step %d | %s | judge=%s/%s | buffered",
                         step,
                         manager_output.action.tool,
+                        judge_result.get("judge_score"),
+                        judge_result.get("severity"),
                     )
 
             except asyncio.CancelledError:

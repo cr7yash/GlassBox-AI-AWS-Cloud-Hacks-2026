@@ -1,57 +1,67 @@
 """traceIngestHandler — POST /trace
 
-Validates the incoming manager trace, invokes the Judge Agent,
-writes the enriched trace to DynamoDB, and broadcasts via WebSocket.
+Validates incoming manager trace, invokes Judge Agent (Bedrock Agent + KB),
+writes enriched trace to DynamoDB, triggers Step Functions on critical events.
+Contract A response: { trace_id, judge_score, severity, regulations_cited }
 """
 
 import json
 import os
+import re
 import time
 import uuid
+from decimal import Decimal
 
 import boto3
 
 dynamodb = boto3.resource("dynamodb")
 traces_table = dynamodb.Table(os.environ["TRACES_TABLE"])
-bedrock_agent = boto3.client("bedrock-agent-runtime", region_name="us-west-2")
+agent_client = boto3.client("bedrock-agent-runtime", region_name="us-west-2")
+sfn_client = boto3.client("stepfunctions", region_name="us-west-2")
+sns_client = boto3.client("sns", region_name="us-west-2")
 
 AGENT_ID = os.environ.get("BEDROCK_AGENT_ID", "")
 AGENT_ALIAS_ID = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "")
+CRITICAL_SM_ARN = os.environ.get("CRITICAL_SM_ARN", "")
+SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
 
 
 def handler(event, context):
     try:
         body = json.loads(event.get("body", "{}"))
     except json.JSONDecodeError:
-        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON"})}
+        return _response(400, {"error": "Invalid JSON"})
 
-    # Generate trace ID
     trace_id = f"trc_{uuid.uuid4().hex[:16]}"
     body["trace_id"] = trace_id
 
     # Invoke Judge Agent
-    judge_result = invoke_judge(body)
-    body.update(judge_result)
+    judge = _invoke_judge(body)
+    body["judge_score"] = judge["judge_score"]
+    body["judge_reasoning"] = judge["judge_reasoning"]
+    body["severity"] = judge["severity"]
+    body["regulations_cited"] = judge["regulations_cited"]
 
     # Write to DynamoDB
-    write_trace(body)
+    _write_trace(body)
 
-    return {
-        "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps({
-            "trace_id": trace_id,
-            "judge_score": judge_result.get("judge_score"),
-            "severity": judge_result.get("severity"),
-            "regulations_cited": judge_result.get("regulations_cited", []),
-        }),
-    }
+    # If critical → trigger Step Functions + SNS
+    if judge["severity"] == "critical":
+        _trigger_critical_path(body)
+
+    # Contract A response (flat, not nested)
+    return _response(200, {
+        "trace_id": trace_id,
+        "judge_score": judge["judge_score"],
+        "severity": judge["severity"],
+        "regulations_cited": judge["regulations_cited"],
+    })
 
 
-def invoke_judge(trace: dict) -> dict:
-    """Call the Judge Agent and parse the grading response."""
+def _invoke_judge(trace: dict) -> dict:
+    """Call the Judge Agent via Bedrock Agent Runtime."""
     if not AGENT_ID or not AGENT_ALIAS_ID:
-        return {"judge_score": None, "judge_reasoning": None, "severity": None, "regulations_cited": []}
+        return _empty_verdict()
 
     prompt = json.dumps({
         "stadium_context": {
@@ -66,71 +76,71 @@ def invoke_judge(trace: dict) -> dict:
     })
 
     try:
-        response = bedrock_agent.invoke_agent(
+        response = agent_client.invoke_agent(
             agentId=AGENT_ID,
             agentAliasId=AGENT_ALIAS_ID,
             sessionId=trace.get("session_id", "default"),
             inputText=prompt,
         )
 
-        # Read the streaming response
         completion = ""
         for event in response.get("completion", []):
             chunk = event.get("chunk", {})
             if "bytes" in chunk:
                 completion += chunk["bytes"].decode("utf-8")
 
-        # Parse judge output from the agent's response
-        return parse_judge_response(completion)
+        return _parse_judge(completion)
 
     except Exception as e:
         print(f"Judge invocation failed: {e}")
-        return {"judge_score": None, "judge_reasoning": str(e), "severity": None, "regulations_cited": []}
+        return _empty_verdict()
 
 
-def parse_judge_response(text: str) -> dict:
-    """Extract judge fields from the agent's text response."""
+def _parse_judge(text: str) -> dict:
+    """Parse judge fields from agent response text."""
+    if not text:
+        return _empty_verdict()
+
     result = {
         "judge_score": None,
-        "judge_reasoning": text[:500] if text else None,
+        "judge_reasoning": text[:500],
         "severity": None,
         "regulations_cited": [],
     }
 
-    # Try to find score in the text
     lower = text.lower()
-    if "score" in lower and any(c.isdigit() for c in text):
-        for word in text.split():
-            word = word.strip(".,;:()")
-            if word.isdigit():
-                score = int(word)
-                if 0 <= score <= 10:
-                    result["judge_score"] = score
-                    break
 
-    # Determine severity from score
+    # Extract score
+    for pattern in [r'(?:judge_)?score["\s:=]+(\d+)', r'(\d+)\s*/\s*10']:
+        match = re.search(pattern, lower)
+        if match:
+            score = int(match.group(1))
+            if 0 <= score <= 10:
+                result["judge_score"] = score
+                break
+
+    # Severity from score
     score = result["judge_score"]
     if score is not None:
-        if score <= 3:
-            result["severity"] = "critical"
-        elif score <= 6:
-            result["severity"] = "warning"
-        else:
-            result["severity"] = "info"
+        result["severity"] = "critical" if score <= 3 else "warning" if score <= 6 else "info"
+    elif "critical" in lower or "violation" in lower or "unsafe" in lower:
+        result["severity"] = "critical"
+        result["judge_score"] = 0
 
-    # Extract regulation citations from text
-    import re
-    citations = re.findall(r'(NFPA \d+\s*§[\d.]+|ASHRAE \d+[\d.]*\s*§[\d.]+|OSHA \d+)', text)
-    for cite in citations[:3]:
-        result["regulations_cited"].append({
-            "code": cite.strip(),
-            "title": "Safety regulation",
-            "excerpt": "See full text in Knowledge Base",
-        })
+    # Extract citations
+    for pattern in [r'(NFPA\s*101\s*§[\d.]+)', r'(ASHRAE\s*(?:Standard\s*)?55\s*§?[\d.]*)',
+                     r'(ASHRAE\s*(?:Standard\s*)?90\.1\s*§?[\d.]*)', r'(OSHA\s*1910)']:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            code = match.group(1).strip()
+            result["regulations_cited"].append({
+                "code": code,
+                "title": "Safety regulation",
+                "excerpt": text[max(0, match.start()-30):match.end()+100].strip()[:200],
+            })
 
-    # If critical but no citations found, add generic one
+    # Enforce: critical must have citations
     if result["severity"] == "critical" and not result["regulations_cited"]:
-        if "lighting" in lower or "egress" in lower:
+        if "lighting" in lower:
             result["regulations_cited"].append({
                 "code": "NFPA 101 §7.8.1.2",
                 "title": "Emergency Lighting",
@@ -140,10 +150,12 @@ def parse_judge_response(text: str) -> dict:
     return result
 
 
-def write_trace(trace: dict):
-    """Write the enriched trace to DynamoDB."""
-    from decimal import Decimal
+def _empty_verdict():
+    return {"judge_score": None, "judge_reasoning": None, "severity": None, "regulations_cited": []}
 
+
+def _write_trace(trace: dict):
+    """Write trace to DynamoDB with Decimal conversion."""
     def convert(obj):
         if isinstance(obj, float):
             return Decimal(str(obj))
@@ -153,5 +165,34 @@ def write_trace(trace: dict):
             return [convert(i) for i in obj]
         return obj
 
-    item = convert(trace)
-    traces_table.put_item(Item=item)
+    traces_table.put_item(Item=convert(trace))
+
+
+def _trigger_critical_path(trace: dict):
+    """Start Step Functions execution + publish to SNS for critical events."""
+    if CRITICAL_SM_ARN:
+        try:
+            sfn_client.start_execution(
+                stateMachineArn=CRITICAL_SM_ARN,
+                input=json.dumps(trace, default=str),
+            )
+        except Exception as e:
+            print(f"Step Functions trigger failed: {e}")
+
+    if SNS_TOPIC_ARN:
+        try:
+            sns_client.publish(
+                TopicArn=SNS_TOPIC_ARN,
+                Subject=f"CRITICAL: {trace.get('stadium_id')} - {trace.get('action', {}).get('tool')}",
+                Message=json.dumps(trace, default=str, indent=2),
+            )
+        except Exception as e:
+            print(f"SNS publish failed: {e}")
+
+
+def _response(status: int, body: dict) -> dict:
+    return {
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(body, default=str),
+    }

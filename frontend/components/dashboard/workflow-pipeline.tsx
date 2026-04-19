@@ -7,7 +7,7 @@ const steps = [
   { id: "simulator", name: "SIMULATOR", Icon: SlidersHorizontal },
   { id: "manager", name: "MANAGER", Icon: Building2 },
   { id: "judge", name: "JUDGE", Icon: Scale },
-  { id: "glassex", name: "GLASSEX", Icon: Share2, warn: true },
+  { id: "audit", name: "AUDIT", Icon: Share2, warn: true },
 ] as const
 
 type WorkflowPipelineProps = {
@@ -37,7 +37,7 @@ export function WorkflowPipeline({ activeIndex }: WorkflowPipelineProps) {
                   ) : null}
                   <step.Icon className="relative z-10 h-5 w-5 sm:h-6 sm:w-6" strokeWidth={1.35} />
                 </div>
-                {step.id === "glassex" ? (
+                {step.id === "audit" ? (
                   <div
                     className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full border border-accent/40 bg-accent/25 shadow-[0_0_18px_oklch(0.65_0.15_85/0.35)]"
                     title="Audit flag"

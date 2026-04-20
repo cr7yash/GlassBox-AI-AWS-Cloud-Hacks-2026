@@ -13,6 +13,7 @@ import {
   ReferenceLine,
   ReferenceArea,
 } from "recharts"
+import { FileText } from "lucide-react"
 import type { Trace } from "@/lib/types"
 import { humanizeAction, humanizeImpact, humanizeSeverity } from "@/lib/humanize"
 
@@ -64,9 +65,11 @@ function dotSize(dollarsDelta: number): number {
 
 type SafetyQuadrantProps = {
   traces: Trace[]
+  postmortemCount?: number
+  onViewPostmortem?: () => void
 }
 
-export function SafetyQuadrant({ traces }: SafetyQuadrantProps) {
+export function SafetyQuadrant({ traces, postmortemCount = 0, onViewPostmortem }: SafetyQuadrantProps) {
   const dots = useMemo<QuadrantDot[]>(() => {
     let cumulativeCo2 = 0
     return traces.map((t, i) => {
@@ -95,6 +98,15 @@ export function SafetyQuadrant({ traces }: SafetyQuadrantProps) {
           SAFETY × SUSTAINABILITY QUADRANT
         </span>
         <div className="flex items-center gap-3">
+          {postmortemCount > 0 && onViewPostmortem && (
+            <button
+              onClick={onViewPostmortem}
+              className="flex items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[10px] font-semibold text-red-400 transition-colors hover:bg-red-500/20 hover:text-red-300"
+            >
+              <FileText className="h-3 w-3" />
+              Post-Incident Report ({postmortemCount})
+            </button>
+          )}
           {Object.entries(SEVERITY_COLORS).map(([sev, color]) => (
             <div key={sev} className="flex items-center gap-1">
               <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />

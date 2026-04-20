@@ -48,6 +48,7 @@ export function Dashboard() {
   const [allTraces, setAllTraces] = useState<Trace[]>([])
   const [isStarting, setIsStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [postmortemOpen, setPostmortemOpen] = useState(false)
 
   // WebSocket stream (connects when sessionId is set and WS_URL is configured)
   const { traces: wsTraces, alerts, postmortems, connected } = useGlassboxStream(sessionId)
@@ -234,7 +235,11 @@ export function Dashboard() {
           </div>
 
           <div className="mx-auto max-w-2xl">
-            <SafetyQuadrant traces={allTraces} />
+            <SafetyQuadrant
+              traces={allTraces}
+              postmortemCount={postmortems.length}
+              onViewPostmortem={() => setPostmortemOpen(true)}
+            />
           </div>
 
           {/* Stadium profile card */}
@@ -342,8 +347,16 @@ export function Dashboard() {
       </div>
 
       {/* Floating overlays */}
-      <PostmortemModal postmortems={postmortems} />
-      <CriticalAlertToast alerts={alerts} />
+      <PostmortemModal
+        postmortems={postmortems}
+        alerts={alerts}
+        open={postmortemOpen}
+        onOpenChange={setPostmortemOpen}
+      />
+      <CriticalAlertToast
+        alerts={alerts}
+        onViewReport={() => setPostmortemOpen(true)}
+      />
     </div>
   )
 }

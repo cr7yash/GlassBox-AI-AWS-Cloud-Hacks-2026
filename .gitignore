@@ -28,4 +28,5 @@ backend/simulator/.env
 # AWS
 .aws-sam/
 samconfig.toml
-.pem
+
+*.pem

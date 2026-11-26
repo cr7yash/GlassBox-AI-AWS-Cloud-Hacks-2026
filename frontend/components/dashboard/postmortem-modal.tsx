@@ -38,13 +38,11 @@ export function PostmortemModal({ postmortems, alerts, open, onOpenChange }: Pos
     ? alerts.find((a) => a.trace_id === latest.trace_id)
     : undefined
 
-  // Dispose audio when modal closes
+  // A new report or matching narration invalidates the current playback.
   useEffect(() => {
-    if (!open) {
-      disposeAudio(audioRef)
-      setIsPlaying(false)
-    }
-  }, [open])
+    disposeAudio(audioRef)
+    setIsPlaying(false)
+  }, [open, latest?.trace_id, latest?.markdown, matchingAlert?.audio_url])
 
   // Cleanup on unmount
   useEffect(() => {
